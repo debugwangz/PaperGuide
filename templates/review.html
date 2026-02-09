@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}TinyLearn - 知识报告{% endblock %}
+
+{% block content %}
+<div class="review-header">
+    <h1>知识体系报告</h1>
+    <div class="period-selector">
+        <select id="period-type">
+            <option value="week">周</option>
+            <option value="month">月</option>
+            <option value="quarter">季度</option>
+            <option value="year">年</option>
+        </select>
+        <input type="text" id="period-key" placeholder="如: 2026-W06, 2026-02">
+        <button id="generate-btn">生成报告</button>
+    </div>
+    <div id="report-status" class="status"></div>
+</div>
+
+<div id="report-content" class="report-content" style="display: none;">
+    <div class="report-layout">
+        <div class="outline-panel">
+            <h2>知识体系</h2>
+            <div id="outline-tree"></div>
+        </div>
+        <div class="detail-panel">
+            <section class="mainline-section">
+                <h2>主线</h2>
+                <div id="mainline"></div>
+            </section>
+            <section class="gaps-section">
+                <h2>知识漏洞</h2>
+                <div id="gaps"></div>
+            </section>
+            <section class="repair-section">
+                <h2>修复计划</h2>
+                <div id="repair-plan"></div>
+            </section>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const periodType = document.getElementById('period-type');
+    const periodKey = document.getElementById('period-key');
+    const generateBtn = document.getElementById('generate-btn');
+    const reportStatus = document.getElementById('report-status');
+    const reportContent = document.getElementById('report-content');
+
+    // 设置默认周期
+    function setDefaultPeriod() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const week = getWeekNumber(now);
+        periodKey.value = `${year}-W${String(week).padStart(2, '0')}`;
+    }
+
+    function getWeekNumber(d) {
+        d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+        d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+        return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    }
+
+    periodType.addEventListener('change', () => {
+        const now = new Date();
+        const year = now.getFullYear();
+        switch (periodType.value) {
+            case 'week':
+                periodKey.value = `${year}-W${String(getWeekNumber(now)).padStart(2, '0')}`;
+                break;
+            case 'month':
+                periodKey.value = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+                break;
+            case 'quarter':
+                periodKey.value = `${year}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+                break;
+            case 'year':
+                periodKey.value = `${year}`;
+                break;
+        }
+    });
+
+    generateBtn.addEventListener('click', async () => {
+        const type = periodType.value;
+        const key = periodKey.value.trim();
+        if (!key) {
+            reportStatus.textContent = '请输入周期标识';
+            reportStatus.className = 'status error';
+            return;
+        }
+
+        generateBtn.disabled = true;
+        generateBtn.textContent = '生成中...';
+        reportStatus.textContent = '';
+        reportStatus.className = 'status';
+
+        try {
+            const resp = await fetch(`/reports/${type}/${key}`, { method: 'POST' });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Unknown error');
+            }
+            const report = await resp.json();
+            renderReport(report);
+            reportStatus.textContent = `✓ 报告已生成 (${new Date(report.generated_at).toLocaleString('zh-CN')})`;
+            reportStatus.className = 'status success';
+        } catch (err) {
+            reportStatus.textContent = '✗ ' + err.message;
+            reportStatus.className = 'status error';
+            reportContent.style.display = 'none';
+        } finally {
+            generateBtn.disabled = false;
+            generateBtn.textContent = '生成报告';
+        }
+    });
+
+    function renderReport(report) {
+        const r = report.report_json;
+        if (!r) {
+            reportContent.style.display = 'none';
+            return;
+        }
+        reportContent.style.display = 'block';
+
+        // Render outline tree
+        document.getElementById('outline-tree').innerHTML = renderTree(r.outline_tree);
+
+        // Render mainline
+        const mainlineHtml = `
+            <div class="mainline-title">${escapeHtml(r.mainline.title)}</div>
+            <div class="mainline-score">强度: ${(r.mainline.mainline_score * 100).toFixed(0)}%</div>
+            <ol class="mainline-steps">
+                ${r.mainline.steps.map(s => `
+                    <li>
+                        <strong>${escapeHtml(s.step_title)}</strong>
+                        <span class="path-ref">${escapeHtml(s.path_ref)}</span>
+                        ${s.notes ? `<p class="notes">${escapeHtml(s.notes)}</p>` : ''}
+                    </li>
+                `).join('')}
+            </ol>
+        `;
+        document.getElementById('mainline').innerHTML = mainlineHtml;
+
+        // Render gaps
+        const gapsHtml = r.gaps.length === 0 ? '<p class="empty">暂无漏洞 🎉</p>' : `
+            <ul class="gaps-list">
+                ${r.gaps.sort((a, b) => b.severity - a.severity).map(g => `
+                    <li class="gap-item severity-${g.severity}">
+                        <div class="gap-title">${escapeHtml(g.gap_title)}</div>
+                        <div class="gap-meta">
+                            <span class="gap-type">${g.gap_type}</span>
+                            <span class="gap-where">${escapeHtml(g.where)}</span>
+                        </div>
+                        <p class="gap-why">${escapeHtml(g.why)}</p>
+                        ${g.minimal_task ? `<div class="gap-task">💡 ${escapeHtml(g.minimal_task)}</div>` : ''}
+                    </li>
+                `).join('')}
+            </ul>
+        `;
+        document.getElementById('gaps').innerHTML = gapsHtml;
+
+        // Render repair plan
+        const repairHtml = r.repair_plan.length === 0 ? '<p class="empty">暂无修复计划</p>' : `
+            <ol class="repair-list">
+                ${r.repair_plan.map(p => `
+                    <li>
+                        <strong>${escapeHtml(p.task)}</strong>
+                        <p class="expected-effect">${escapeHtml(p.expected_effect)}</p>
+                    </li>
+                `).join('')}
+            </ol>
+        `;
+        document.getElementById('repair-plan').innerHTML = repairHtml;
+    }
+
+    function renderTree(node, depth = 0) {
+        if (!node) return '';
+        const hasChildren = node.children && node.children.length > 0;
+        return `
+            <div class="tree-node" style="margin-left: ${depth * 20}px">
+                <div class="node-header ${hasChildren ? 'has-children' : ''}">
+                    <span class="node-path">${escapeHtml(node.path)}</span>
+                    <span class="node-coverage">${node.coverage}%</span>
+                </div>
+                <div class="node-summary">${escapeHtml(node.node_summary)}</div>
+                ${hasChildren ? node.children.map(c => renderTree(c, depth + 1)).join('') : ''}
+            </div>
+        `;
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // 初始化
+    setDefaultPeriod();
+</script>
+{% endblock %}

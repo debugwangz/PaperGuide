@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+aiosqlite
+python-dotenv
+openai
+anthropic
+jinja2
+pydantic
+pydantic-settings

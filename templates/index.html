@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}TinyLearn - 今天学到了什么？{% endblock %}
+
+{% block content %}
+<div class="input-section">
+    <h1>今天学到了什么？</h1>
+    <form id="entry-form">
+        <textarea 
+            id="entry-text" 
+            placeholder="写下你今天学到的东西...任意领域、任意长度"
+            rows="6"
+        ></textarea>
+        <button type="submit" id="submit-btn">提交</button>
+    </form>
+    <div id="status" class="status"></div>
+</div>
+
+<div class="recent-section">
+    <h2>最近的学习记录</h2>
+    <div id="entries-list" class="entries-list"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const form = document.getElementById('entry-form');
+    const entryText = document.getElementById('entry-text');
+    const submitBtn = document.getElementById('submit-btn');
+    const status = document.getElementById('status');
+    const entriesList = document.getElementById('entries-list');
+
+    // 加载最近的记录
+    async function loadEntries() {
+        try {
+            const resp = await fetch('/entries?limit=10');
+            const entries = await resp.json();
+            renderEntries(entries);
+        } catch (e) {
+            console.error('Failed to load entries:', e);
+        }
+    }
+
+    function renderEntries(entries) {
+        if (entries.length === 0) {
+            entriesList.innerHTML = '<p class="empty">暂无记录</p>';
+            return;
+        }
+        entriesList.innerHTML = entries.map(e => `
+            <div class="entry-card">
+                <div class="entry-date">${new Date(e.created_at).toLocaleDateString('zh-CN')}</div>
+                <div class="entry-text">${escapeHtml(e.entry_text.slice(0, 200))}${e.entry_text.length > 200 ? '...' : ''}</div>
+                ${e.enrich_json ? `<div class="entry-summary">📝 ${escapeHtml(e.enrich_json.summary)}</div>` : ''}
+            </div>
+        `).join('');
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = entryText.value.trim();
+        if (!text) return;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = '处理中...';
+        status.textContent = '';
+        status.className = 'status';
+
+        try {
+            const resp = await fetch('/entries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entry_text: text }),
+            });
+            
+            if (resp.ok) {
+                status.textContent = '✓ 已保存并结构化';
+                status.className = 'status success';
+                entryText.value = '';
+                loadEntries();
+            } else {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Unknown error');
+            }
+        } catch (err) {
+            status.textContent = '✗ ' + err.message;
+            status.className = 'status error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '提交';
+        }
+    });
+
+    // 初始加载
+    loadEntries();
+</script>
+{% endblock %}
