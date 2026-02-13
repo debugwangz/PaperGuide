@@ -1,10 +1,19 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-aiosqlite
-python-dotenv
-openai
-anthropic
-jinja2
-pydantic
-pydantic-settings
+# PaperGuide dependencies
+
+# Web UI
+streamlit>=1.30.0
+streamlit-pdf-viewer>=0.0.7
+
+# PDF processing
+pymupdf>=1.23.0
+
+# LLM clients
+openai>=1.0.0
+anthropic>=0.18.0
+
+# HTTP requests (for search and arxiv)
+requests>=2.31.0
+
+# Configuration
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0

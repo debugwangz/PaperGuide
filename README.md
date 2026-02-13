@@ -1,58 +1,66 @@
-# TinyLearn
+# PaperGuide 📄
 
-每天一条学习记录，自动构建知识体系。
+帮助任何人（哪怕对领域一无所知）通过与AI对话，理解论文核心，同时学习论文省略的背景知识。
 
-## 功能
+## 功能特点
 
-- 输入每日学习内容，自动结构化（提炼概念、命题、关系）
-- 按周/月/季/年生成知识体系报告
-- 自动识别知识漏洞并给出修复建议
+- **PDF/arXiv 支持** - 上传PDF或输入arXiv链接
+- **智能解读** - 自动生成结构化的论文解读
+- **知识补充** - 通过网络搜索补充论文省略的背景知识
+- **对话问答** - 不懂的地方随时问，AI实时解答
+- **文档更新** - 对话中的重要知识会更新到解读文档
 
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
+# 1. 创建conda环境
+conda create -n paperguide python=3.11 -y
+conda activate paperguide
+
+# 2. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置环境变量
+# 3. 配置环境变量
 cp .env.example .env
 # 编辑 .env 填入 API Key
 
-# 3. 启动服务
-uvicorn app.main:app --reload
-
-# 4. 访问
-# 输入页面: http://localhost:8000/
-# 报告页面: http://localhost:8000/review
-# API 文档: http://localhost:8000/docs
+# 4. 启动应用
+streamlit run app.py
 ```
 
-## 配置
+## 配置说明
 
 编辑 `.env` 文件：
 
-```
-# 选择 LLM: openai 或 claude
+```bash
+# LLM 提供商: openai 或 claude
 LLM_PROVIDER=openai
 
-# OpenAI
+# OpenAI 配置
 OPENAI_API_KEY=sk-xxx
 OPENAI_MODEL=gpt-4o
 
-# Claude (如果使用)
-ANTHROPIC_API_KEY=sk-ant-xxx
-CLAUDE_MODEL=claude-sonnet-4-20250514
+# 搜索 API
+BRAVE_API_KEY=BSA-xxx
 ```
 
-## API
+## 项目结构
 
-- `POST /entries` - 提交学习记录
-- `GET /entries` - 获取记录列表
-- `POST /reports/{week|month|quarter|year}/{key}` - 生成报告
-- `GET /reports/{week|month|quarter|year}/{key}` - 获取报告
+```
+PaperGuide/
+├── app.py              # Streamlit 主入口
+├── config.py           # 配置管理
+├── core/               # 核心模块
+│   ├── agent.py        # Agent 主逻辑
+│   ├── pdf_parser.py   # PDF 解析
+│   ├── arxiv_downloader.py  # arXiv 下载
+│   ├── llm_client.py   # LLM 客户端
+│   └── search/         # 搜索模块
+├── prompts/            # 提示词模板
+├── templates/          # MD 模板
+└── outputs/            # 输出目录
+```
 
-## 技术栈
+## License
 
-- FastAPI + SQLite + Jinja2
-- OpenAI / Claude API
-- Pydantic for structured output
+MIT

@@ -1,0 +1,281 @@
+"""PaperGuide - Streamlit Web Application.
+
+使用 OpenClaw 作为后端 Agent 处理论文解读。
+"""
+import streamlit as st
+import subprocess
+import json
+import uuid
+import re
+from pathlib import Path
+
+# 配置
+WORKSPACE = Path(__file__).parent / "agent_workspace"
+UPLOADS_DIR = WORKSPACE / "uploads"
+OUTPUTS_DIR = WORKSPACE / "outputs"
+
+# 确保目录存在
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def extract_paper_id(filename: str = None, arxiv_input: str = None) -> str:
+    """从文件名或 arXiv 输入提取论文 ID 作为目录名"""
+    if filename:
+        # 去掉 .pdf 后缀，清理特殊字符
+        name = Path(filename).stem
+        # 替换空格和特殊字符为下划线
+        name = re.sub(r'[\s\-]+', '_', name)
+        name = re.sub(r'[^\w_]', '', name)
+        return name[:50]  # 限制长度
+
+    if arxiv_input:
+        # 提取 arXiv ID，支持多种格式
+        # https://arxiv.org/abs/2512.03041 -> 2512.03041
+        # arxiv:2512.03041 -> 2512.03041
+        # 2512.03041 -> 2512.03041
+        match = re.search(r'(\d{4}\.\d{4,5})', arxiv_input)
+        if match:
+            return f"arxiv_{match.group(1)}"
+        # 如果没匹配到，清理输入作为 ID
+        clean = re.sub(r'[^\w]', '_', arxiv_input)
+        return clean[:50]
+
+    return str(uuid.uuid4())[:8]
+
+# Page config
+st.set_page_config(
+    page_title="PaperGuide",
+    page_icon="📄",
+    layout="wide"
+)
+
+
+def call_openclaw(message: str, session_id: str) -> str:
+    """通过 OpenClaw CLI 调用 agent"""
+    try:
+        result = subprocess.run(
+            [
+                "openclaw", "agent",
+                "--local",
+                "--agent", "paperguide",
+                "--session-id", session_id,
+                "--message", message,
+                "--json"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=str(WORKSPACE)
+        )
+
+        if result.returncode != 0:
+            st.error(f"OpenClaw 错误: {result.stderr}")
+            return ""
+
+        # 解析 JSON 响应
+        try:
+            data = json.loads(result.stdout)
+            payloads = data.get("payloads", [])
+            if payloads:
+                return payloads[0].get("text", "")
+        except json.JSONDecodeError:
+            # 可能输出包含日志前缀，尝试找到 JSON 部分
+            stdout = result.stdout
+            json_start = stdout.find('{')
+            if json_start != -1:
+                try:
+                    data = json.loads(stdout[json_start:])
+                    payloads = data.get("payloads", [])
+                    if payloads:
+                        return payloads[0].get("text", "")
+                except:
+                    pass
+            return stdout
+
+        return ""
+    except subprocess.TimeoutExpired:
+        st.error("请求超时，请重试")
+        return ""
+    except Exception as e:
+        st.error(f"调用失败: {str(e)}")
+        return ""
+
+
+def get_review_content(paper_id: str) -> str:
+    """读取 Agent 生成的 review 文件"""
+    review_path = OUTPUTS_DIR / paper_id / "review.md"
+    if review_path.exists():
+        return review_path.read_text(encoding="utf-8")
+    return ""
+
+
+def main():
+    st.title("📄 PaperGuide")
+    st.caption("帮助任何人理解学术论文 | Powered by OpenClaw")
+    st.caption("🤖 claude-opus-4-5 via OpenClaw")
+
+    # Initialize session state
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())[:8]
+    if "paper_id" not in st.session_state:
+        st.session_state.paper_id = None  # 论文 ID，用于目录名
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "paper_loaded" not in st.session_state:
+        st.session_state.paper_loaded = False
+    if "review_md" not in st.session_state:
+        st.session_state.review_md = ""
+
+    # Sidebar
+    with st.sidebar:
+        st.header("📤 上传论文")
+
+        # PDF upload
+        uploaded_file = st.file_uploader(
+            "上传 PDF 文件",
+            type=["pdf"],
+            help="支持 PDF 格式的学术论文"
+        )
+
+        # arXiv input
+        arxiv_input = st.text_input(
+            "或输入 arXiv 链接/ID",
+            placeholder="例如: 2401.12345 或 https://arxiv.org/abs/2401.12345"
+        )
+
+        # User background
+        user_background = st.text_area(
+            "你的背景（可选）",
+            placeholder="例如：计算机本科生，了解基础机器学习",
+            help="帮助 AI 调整解释的深度"
+        )
+
+        # Analyze button
+        if st.button("🔍 开始分析", type="primary", use_container_width=True):
+            session_id = st.session_state.session_id
+
+            with st.spinner("正在分析论文..."):
+                if uploaded_file:
+                    # 提取论文 ID 作为目录名
+                    paper_id = extract_paper_id(filename=uploaded_file.name)
+                    st.session_state.paper_id = paper_id
+
+                    # 保存上传的 PDF
+                    pdf_path = UPLOADS_DIR / f"{paper_id}.pdf"
+                    pdf_path.write_bytes(uploaded_file.read())
+
+                    # 构建消息（包含 paper_id 以便 agent 知道输出目录）
+                    background_info = f"\n\n用户背景：{user_background}" if user_background else ""
+                    message = f"[paper_id: {paper_id}]\n请解读这篇论文：{pdf_path}{background_info}"
+
+                elif arxiv_input:
+                    # 提取 arXiv ID 作为目录名
+                    paper_id = extract_paper_id(arxiv_input=arxiv_input)
+                    st.session_state.paper_id = paper_id
+
+                    background_info = f"\n\n用户背景：{user_background}" if user_background else ""
+                    message = f"[paper_id: {paper_id}]\n请解读这篇论文（arXiv: {arxiv_input}）{background_info}"
+
+                else:
+                    st.warning("请先上传 PDF 或输入 arXiv 链接")
+                    return
+
+                # 调用 OpenClaw
+                response = call_openclaw(message, session_id)
+
+                if response:
+                    # 从文件读取完整的 review 内容（不是用 response）
+                    review_content = get_review_content(paper_id)
+                    if review_content:
+                        st.session_state.review_md = review_content
+                    else:
+                        # 如果文件还没生成，用 response 作为临时内容
+                        st.session_state.review_md = response
+                    st.session_state.paper_loaded = True
+                    st.session_state.messages = []
+                    st.success("分析完成！")
+                    st.rerun()
+
+        # 新建会话
+        if st.button("🔄 新建会话", use_container_width=True):
+            st.session_state.session_id = str(uuid.uuid4())[:8]
+            st.session_state.paper_id = None
+            st.session_state.messages = []
+            st.session_state.paper_loaded = False
+            st.session_state.review_md = ""
+            st.rerun()
+
+    # Main content
+    if st.session_state.paper_loaded:
+        # Two columns: Review and Chat
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            st.header("📝 论文解读")
+
+            # 尝试从文件读取最新内容
+            if st.session_state.paper_id:
+                file_review = get_review_content(st.session_state.paper_id)
+                if file_review:
+                    st.session_state.review_md = file_review
+
+            st.markdown(st.session_state.review_md)
+
+        with col2:
+            st.header("💬 问答对话")
+            render_chat()
+    else:
+        # Welcome message
+        st.info("👈 请在左侧上传 PDF 或输入 arXiv 链接开始分析")
+        st.markdown("""
+        ### 使用说明
+
+        1. **上传论文** - 支持 PDF 文件或 arXiv 链接
+        2. **填写背景** - 帮助 AI 调整解释深度（可选）
+        3. **开始分析** - AI 会生成论文解读
+        4. **对话问答** - 有不懂的随时问
+
+        ### 特点
+
+        - 🎯 **零基础友好** - 假设你对领域一无所知
+        - 🔗 **逻辑清晰** - 每个概念都有动机和类比
+        - 📚 **补充知识** - 自动填补论文省略的背景
+        - 💬 **对话式** - 随时提问，实时更新文档
+        """)
+
+
+def render_chat():
+    """Render chat interface."""
+    # Display messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Chat input
+    if prompt := st.chat_input("有什么不懂的？问我吧..."):
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Get response from OpenClaw
+        with st.chat_message("assistant"):
+            with st.spinner("思考中..."):
+                response = call_openclaw(prompt, st.session_state.session_id)
+                st.markdown(response)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": response}
+                )
+
+        # 检查是否有文档更新
+        if st.session_state.paper_id:
+            new_review = get_review_content(st.session_state.paper_id)
+            if new_review and new_review != st.session_state.review_md:
+                st.session_state.review_md = new_review
+                st.toast("📝 文档已更新", icon="✅")
+                st.rerun()
+
+
+if __name__ == "__main__":
+    main()

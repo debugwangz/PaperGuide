@@ -1,4 +1,22 @@
 # Claude AI Assistant
 .claude/
 CLAUDE.md
+
+# Environment
 .env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Output
+outputs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
