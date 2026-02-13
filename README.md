@@ -45,21 +45,17 @@ AI：[简短回答]
 ### 前置要求
 
 - Python 3.11+
-- [OpenClaw](https://github.com/anthropics/openclaw) - AI Agent 框架
-- Claude API Key（通过 OpenClaw 配置）
+- Node.js 18+
+- Claude API Key
 
 ### 1. 安装 OpenClaw
 
 ```bash
-# 安装 OpenClaw CLI
-pip install openclaw
-
-# 配置 Claude API（按提示输入 API Key）
-openclaw config set claude.api_key
-
-# 验证配置
-openclaw config list
+npm install -g openclaw
+openclaw onboard
 ```
+
+详细文档：https://docs.openclaw.ai/getting-started
 
 ### 2. 安装 PaperGuide
 
@@ -79,14 +75,10 @@ pip install -r requirements.txt
 ### 3. 注册 Agent
 
 ```bash
-# 注册 PaperGuide Agent 到 OpenClaw
-openclaw agents add paperguide \
-  --workspace ./agent_workspace \
-  --model claude-opus-4-5
-
-# 验证注册成功
-openclaw agents list
+openclaw agents add paperguide --workspace ./agent_workspace
 ```
+
+详细文档：https://docs.openclaw.ai/cli/agents
 
 ### 4. 启动
 

@@ -322,42 +322,57 @@ def main():
 
 def render_chat():
     """Render chat interface."""
-    # Display messages
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # 初始化状态
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
 
-    # Chat input
-    if prompt := st.chat_input("有什么不懂的？问我吧..."):
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # 消息容器
+    messages_container = st.container()
 
-        # Get response from OpenClaw
-        with st.chat_message("assistant"):
-            with st.spinner("思考中..."):
-                response = call_openclaw(prompt, st.session_state.session_id)
+    # Chat input（始终在最底部）
+    prompt = st.chat_input("有什么不懂的？问我吧...")
+
+    # 在消息容器中显示内容
+    with messages_container:
+        # 显示历史消息
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # 如果正在处理，显示 spinner 并获取响应
+        if st.session_state.is_processing:
+            with st.chat_message("assistant"):
+                with st.spinner("思考中..."):
+                    # 获取最后一条用户消息
+                    last_user_msg = st.session_state.messages[-1]["content"]
+                    response = call_openclaw(last_user_msg, st.session_state.session_id)
                 st.markdown(response)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": response}
+
+            # 保存 AI 响应
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            st.session_state.is_processing = False
+
+            # 保存会话
+            if st.session_state.paper_id:
+                save_session(
+                    st.session_state.paper_id,
+                    st.session_state.messages,
+                    st.session_state.session_id
                 )
 
-        # 保存会话
-        if st.session_state.paper_id:
-            save_session(
-                st.session_state.paper_id,
-                st.session_state.messages,
-                st.session_state.session_id
-            )
+                # 检查是否有文档更新
+                new_review = get_review_content(st.session_state.paper_id)
+                if new_review and new_review != st.session_state.review_md:
+                    st.session_state.review_md = new_review
+                    st.toast("📝 文档已更新", icon="✅")
 
-        # 检查是否有文档更新
-        if st.session_state.paper_id:
-            new_review = get_review_content(st.session_state.paper_id)
-            if new_review and new_review != st.session_state.review_md:
-                st.session_state.review_md = new_review
-                st.toast("📝 文档已更新", icon="✅")
-                st.rerun()
+            st.rerun()
+
+    # 处理用户输入
+    if prompt and not st.session_state.is_processing:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.is_processing = True
+        st.rerun()
 
 
 if __name__ == "__main__":
