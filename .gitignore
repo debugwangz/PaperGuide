@@ -11,8 +11,21 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Output
+# Output (legacy)
 outputs/
+
+# Agent workspace - 用户数据不提交
+agent_workspace/uploads/
+agent_workspace/outputs/
+
+# PDF 文件
+*.pdf
+
+# 测试文件
+test_*.py
+
+# Logs
+logs/*.log
 
 # IDE
 .vscode/

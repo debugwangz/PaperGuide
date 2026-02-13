@@ -43,6 +43,54 @@ def extract_paper_id(filename: str = None, arxiv_input: str = None) -> str:
 
     return str(uuid.uuid4())[:8]
 
+
+def save_session(paper_id: str, messages: list, session_id: str):
+    """保存会话到文件"""
+    if not paper_id:
+        return
+    session_dir = OUTPUTS_DIR / paper_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_file = session_dir / "session.json"
+    data = {
+        "session_id": session_id,
+        "messages": messages
+    }
+    session_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def load_session(paper_id: str) -> dict:
+    """加载会话"""
+    session_file = OUTPUTS_DIR / paper_id / "session.json"
+    if session_file.exists():
+        return json.loads(session_file.read_text(encoding="utf-8"))
+    return {"session_id": str(uuid.uuid4())[:8], "messages": []}
+
+
+def list_papers() -> list:
+    """列出所有已分析的论文，返回 (paper_id, title) 列表"""
+    papers = []
+    if OUTPUTS_DIR.exists():
+        for d in sorted(OUTPUTS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if d.is_dir() and (d / "review.md").exists():
+                # 尝试从 review.md 提取标题
+                title = d.name  # 默认用目录名
+                review_path = d / "review.md"
+                try:
+                    content = review_path.read_text(encoding="utf-8")
+                    # 提取第一行 # 开头的标题
+                    for line in content.split("\n"):
+                        line = line.strip()
+                        if line.startswith("# "):
+                            title = line[2:].strip()
+                            # 截断过长的标题
+                            if len(title) > 40:
+                                title = title[:37] + "..."
+                            break
+                except:
+                    pass
+                papers.append((d.name, title))
+    return papers
+
 # Page config
 st.set_page_config(
     page_title="PaperGuide",
@@ -194,6 +242,8 @@ def main():
                         st.session_state.review_md = response
                     st.session_state.paper_loaded = True
                     st.session_state.messages = []
+                    # 保存初始会话
+                    save_session(paper_id, [], session_id)
                     st.success("分析完成！")
                     st.rerun()
 
@@ -205,6 +255,31 @@ def main():
             st.session_state.paper_loaded = False
             st.session_state.review_md = ""
             st.rerun()
+
+        # 历史记录
+        st.divider()
+        st.header("📚 历史记录")
+        papers = list_papers()
+        if papers:
+            for paper_id, title in papers:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    if st.button(f"📄 {title}", key=f"history_{paper_id}", use_container_width=True):
+                        # 加载历史会话
+                        session_data = load_session(paper_id)
+                        st.session_state.session_id = session_data.get("session_id", str(uuid.uuid4())[:8])
+                        st.session_state.paper_id = paper_id
+                        st.session_state.messages = session_data.get("messages", [])
+                        st.session_state.review_md = get_review_content(paper_id)
+                        st.session_state.paper_loaded = True
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️", key=f"delete_{paper_id}", help="删除此记录"):
+                        import shutil
+                        shutil.rmtree(OUTPUTS_DIR / paper_id, ignore_errors=True)
+                        st.rerun()
+        else:
+            st.caption("暂无历史记录")
 
     # Main content
     if st.session_state.paper_loaded:
@@ -267,6 +342,14 @@ def render_chat():
                 st.session_state.messages.append(
                     {"role": "assistant", "content": response}
                 )
+
+        # 保存会话
+        if st.session_state.paper_id:
+            save_session(
+                st.session_state.paper_id,
+                st.session_state.messages,
+                st.session_state.session_id
+            )
 
         # 检查是否有文档更新
         if st.session_state.paper_id:
