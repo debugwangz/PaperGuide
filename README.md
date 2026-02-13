@@ -46,29 +46,55 @@ AI：[简短回答]
 
 - Python 3.11+
 - [OpenClaw](https://github.com/anthropics/openclaw) - AI Agent 框架
+- Claude API Key（通过 OpenClaw 配置）
 
-### 安装
+### 1. 安装 OpenClaw
 
 ```bash
-# 1. 克隆项目
+# 安装 OpenClaw CLI
+pip install openclaw
+
+# 配置 Claude API（按提示输入 API Key）
+openclaw config set claude.api_key
+
+# 验证配置
+openclaw config list
+```
+
+### 2. 安装 PaperGuide
+
+```bash
+# 克隆项目
 git clone https://github.com/yourusername/PaperGuide.git
 cd PaperGuide
 
-# 2. 创建conda环境
+# 创建 conda 环境
 conda create -n paperguide python=3.11 -y
 conda activate paperguide
 
-# 3. 安装依赖
+# 安装依赖
 pip install -r requirements.txt
+```
 
-# 4. 注册 OpenClaw Agent
+### 3. 注册 Agent
+
+```bash
+# 注册 PaperGuide Agent 到 OpenClaw
 openclaw agents add paperguide \
   --workspace ./agent_workspace \
-  --model claude-proxy/claude-opus-4-5
+  --model claude-opus-4-5
 
-# 5. 启动应用
+# 验证注册成功
+openclaw agents list
+```
+
+### 4. 启动
+
+```bash
 streamlit run app.py
 ```
+
+访问 http://localhost:8501 开始使用。
 
 ## 项目结构
 
