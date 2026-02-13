@@ -7,6 +7,7 @@ import subprocess
 import json
 import uuid
 import re
+import time
 from pathlib import Path
 
 # 配置
@@ -326,12 +327,26 @@ def render_chat():
     # 初始化状态
     if "is_processing" not in st.session_state:
         st.session_state.is_processing = False
+    if "processing_start_time" not in st.session_state:
+        st.session_state.processing_start_time = None
+
+    # 超时检测（120秒）
+    TIMEOUT_SECONDS = 120
+    if st.session_state.is_processing and st.session_state.processing_start_time:
+        elapsed = time.time() - st.session_state.processing_start_time
+        if elapsed > TIMEOUT_SECONDS:
+            st.session_state.is_processing = False
+            st.session_state.processing_start_time = None
+            st.error(f"请求超时（{TIMEOUT_SECONDS}秒），请重试")
 
     # 消息容器
     messages_container = st.container()
 
-    # Chat input（始终在最底部）
-    prompt = st.chat_input("有什么不懂的？问我吧...")
+    # Chat input（始终在最底部，处理中时禁用）
+    prompt = st.chat_input(
+        "有什么不懂的？问我吧..." if not st.session_state.is_processing else "等待回复中...",
+        disabled=st.session_state.is_processing
+    )
 
     # 在消息容器中显示内容
     with messages_container:
@@ -352,6 +367,7 @@ def render_chat():
             # 保存 AI 响应
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.session_state.is_processing = False
+            st.session_state.processing_start_time = None
 
             # 保存会话
             if st.session_state.paper_id:
@@ -373,6 +389,7 @@ def render_chat():
     if prompt and not st.session_state.is_processing:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.is_processing = True
+        st.session_state.processing_start_time = time.time()
         st.rerun()
 
 
