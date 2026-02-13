@@ -295,7 +295,8 @@ def main():
                 if file_review:
                     st.session_state.review_md = file_review
 
-            st.markdown(st.session_state.review_md)
+            # 使用 unsafe_allow_html 支持锚点跳转
+            st.markdown(st.session_state.review_md, unsafe_allow_html=True)
 
         with col2:
             st.header("💬 问答对话")
