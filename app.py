@@ -8,7 +8,17 @@ import json
 import uuid
 import re
 import time
+import logging
+
 from pathlib import Path
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("PaperGuide")
 
 # 配置
 WORKSPACE = Path(__file__).parent / "agent_workspace"
@@ -18,6 +28,7 @@ OUTPUTS_DIR = WORKSPACE / "outputs"
 # 确保目录存在
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+logger.info("PaperGuide 启动，工作目录: %s", WORKSPACE)
 
 
 def extract_paper_id(filename: str = None, arxiv_input: str = None) -> str:
@@ -67,6 +78,27 @@ def load_session(paper_id: str) -> dict:
     return {"session_id": str(uuid.uuid4())[:8], "messages": []}
 
 
+
+def get_agent_model() -> str:
+    """从 OpenClaw 获取 paperguide agent 的模型信息"""
+    try:
+        result = subprocess.run(
+            ["openclaw", "agents", "list"],
+            capture_output=True, text=True, timeout=10
+        )
+        in_paperguide = False
+        for line in result.stdout.split("\n"):
+            if "- paperguide" in line:
+                in_paperguide = True
+            elif line.startswith("- ") and "paperguide" not in line:
+                in_paperguide = False
+            elif in_paperguide and "Model:" in line:
+                return line.split("Model:")[-1].strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
 def list_papers() -> list:
     """列出所有已分析的论文，返回 (paper_id, title) 列表"""
     papers = []
@@ -100,8 +132,64 @@ st.set_page_config(
 )
 
 
+def call_openclaw_stream(message: str, session_id: str, status_placeholder) -> str:
+    """通过 OpenClaw CLI 调用 agent，流式输出"""
+    logger.info("流式调用 OpenClaw: session=%s, message=%s", session_id, message[:80])
+    try:
+        process = subprocess.Popen(
+            [
+                "openclaw", "agent",
+                "--local",
+                "--agent", "paperguide",
+                "--session-id", session_id,
+                "--message", message
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=str(WORKSPACE)
+        )
+
+        output_lines = []
+        status_lines = []  # 状态信息（工具调用等）
+
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                # 过滤插件注册日志
+                if "[plugins]" in line or "feishu_" in line:
+                    continue
+                # 工具调用日志显示为状态
+                if line.startswith("[tools]"):
+                    logger.info("工具调用: %s", line.strip())
+                    status_lines.append(line.strip())
+                    status_placeholder.info("\n".join(status_lines[-3:]))
+                else:
+                    output_lines.append(line)
+                    # 实时更新输出
+                    status_placeholder.markdown("".join(output_lines))
+
+        process.wait()
+        if process.returncode != 0:
+            logger.error("OpenClaw 流式调用失败, returncode=%d", process.returncode)
+            st.error(f"OpenClaw 错误 (code {process.returncode})")
+            return ""
+
+        logger.info("流式调用完成，输出 %d 行", len(output_lines))
+        return "".join(output_lines).strip()
+
+    except Exception as e:
+        logger.exception("流式调用异常")
+        st.error(f"调用失败: {str(e)}")
+        return ""
+
+
 def call_openclaw(message: str, session_id: str) -> str:
-    """通过 OpenClaw CLI 调用 agent"""
+    """通过 OpenClaw CLI 调用 agent（阻塞式，用于初始分析）"""
+    logger.info("阻塞式调用 OpenClaw: session=%s, message=%s", session_id, message[:80])
     try:
         result = subprocess.run(
             [
@@ -119,8 +207,11 @@ def call_openclaw(message: str, session_id: str) -> str:
         )
 
         if result.returncode != 0:
+            logger.error("OpenClaw 阻塞调用失败: returncode=%d, stderr=%s", result.returncode, result.stderr[:200])
             st.error(f"OpenClaw 错误: {result.stderr}")
             return ""
+
+        logger.info("阻塞调用完成，stdout 长度: %d", len(result.stdout))
 
         # 解析 JSON 响应
         try:
@@ -144,9 +235,11 @@ def call_openclaw(message: str, session_id: str) -> str:
 
         return ""
     except subprocess.TimeoutExpired:
+        logger.error("阻塞调用超时（600秒）")
         st.error("请求超时，请重试")
         return ""
     except Exception as e:
+        logger.exception("阻塞调用异常")
         st.error(f"调用失败: {str(e)}")
         return ""
 
@@ -162,7 +255,7 @@ def get_review_content(paper_id: str) -> str:
 def main():
     st.title("📄 PaperGuide")
     st.caption("帮助任何人理解学术论文 | Powered by OpenClaw")
-    st.caption("🤖 claude-opus-4-5 via OpenClaw")
+    st.caption(f"🤖 {get_agent_model()} via OpenClaw")
 
     # Initialize session state
     if "session_id" not in st.session_state:
@@ -202,13 +295,16 @@ def main():
 
         # Analyze button
         if st.button("🔍 开始分析", type="primary", use_container_width=True):
-            session_id = st.session_state.session_id
+            # 新论文分析时生成新的 session_id
+            session_id = str(uuid.uuid4())[:8]
+            st.session_state.session_id = session_id
 
             with st.spinner("正在分析论文..."):
                 if uploaded_file:
                     # 提取论文 ID 作为目录名
                     paper_id = extract_paper_id(filename=uploaded_file.name)
                     st.session_state.paper_id = paper_id
+                    logger.info("上传 PDF: %s, paper_id=%s", uploaded_file.name, paper_id)
 
                     # 保存上传的 PDF
                     pdf_path = UPLOADS_DIR / f"{paper_id}.pdf"
@@ -222,6 +318,7 @@ def main():
                     # 提取 arXiv ID 作为目录名
                     paper_id = extract_paper_id(arxiv_input=arxiv_input)
                     st.session_state.paper_id = paper_id
+                    logger.info("arXiv 输入: %s, paper_id=%s", arxiv_input, paper_id)
 
                     background_info = f"\n\n用户背景：{user_background}" if user_background else ""
                     message = f"[paper_id: {paper_id}]\n请解读这篇论文（arXiv: {arxiv_input}）{background_info}"
@@ -234,6 +331,7 @@ def main():
                 response = call_openclaw(message, session_id)
 
                 if response:
+                    logger.info("分析完成, paper_id=%s", paper_id)
                     # 从文件读取完整的 review 内容（不是用 response）
                     review_content = get_review_content(paper_id)
                     if review_content:
@@ -273,6 +371,9 @@ def main():
                         st.session_state.messages = session_data.get("messages", [])
                         st.session_state.review_md = get_review_content(paper_id)
                         st.session_state.paper_loaded = True
+                        # 重置处理状态
+                        st.session_state.is_processing = False
+                        st.session_state.processing_start_time = None
                         st.rerun()
                 with col2:
                     if st.button("🗑️", key=f"delete_{paper_id}", help="删除此记录"):
@@ -355,14 +456,31 @@ def render_chat():
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-        # 如果正在处理，显示 spinner 并获取响应
+        # 如果正在处理，流式获取响应
         if st.session_state.is_processing:
             with st.chat_message("assistant"):
-                with st.spinner("思考中..."):
-                    # 获取最后一条用户消息
-                    last_user_msg = st.session_state.messages[-1]["content"]
-                    response = call_openclaw(last_user_msg, st.session_state.session_id)
+                # 创建一个 placeholder 用于流式更新
+                status_placeholder = st.empty()
+                status_placeholder.info("思考中...")
+
+                # 获取要发送的消息（可能包含章节上下文）
+                message_to_send = st.session_state.get(
+                    "full_message_to_send",
+                    st.session_state.messages[-1]["content"]
+                )
+                response = call_openclaw_stream(
+                    message_to_send,
+                    st.session_state.session_id,
+                    status_placeholder
+                )
+
+                # 清空 placeholder，显示最终结果
+                status_placeholder.empty()
                 st.markdown(response)
+
+            # 清理临时变量
+            if "full_message_to_send" in st.session_state:
+                del st.session_state.full_message_to_send
 
             # 保存 AI 响应
             st.session_state.messages.append({"role": "assistant", "content": response})
@@ -387,7 +505,9 @@ def render_chat():
 
     # 处理用户输入
     if prompt and not st.session_state.is_processing:
+        logger.info("用户提问: %s", prompt[:80])
         st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.full_message_to_send = prompt
         st.session_state.is_processing = True
         st.session_state.processing_start_time = time.time()
         st.rerun()
